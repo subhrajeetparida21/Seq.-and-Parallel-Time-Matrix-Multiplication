@@ -1,25 +1,28 @@
-/**********************************************************************
- * PROGRAM: Performance Analysis of Cramer's Rule (Sequential vs Parallel)
+/*****************************************************************************************
+ * PROGRAM: Performance Analysis of Cramer's Rule (Sequential vs Parallel using fork)
  *
- * PURPOSE:
- * This program solves the linear system AX = B using Cramer's Rule.
- * It compares execution time between:
+ * OBJECTIVE:
+ * This program solves a system of linear equations AX = B using Cramer's Rule and
+ * compares the execution time of:
  *      1) Sequential computation
- *      2) Parallel computation using fork()
+ *      2) Parallel computation using multiple processes (fork)
  *
- * It accepts multiple matrix sizes from the command line and stores
- * performance results into a CSV file for plotting graphs.
+ * The performance results are written into a CSV file for analysis and graph plotting.
  *
  * USAGE:
+ *      ./final size1 size2 size3 ...
+ * Example:
  *      ./final 200 400 600 800
  *
- * OUTPUT FILE:
- *      results.csv  → contains size, sequential time, parallel time, speedup
+ * OUTPUT:
+ *      results.csv → Contains:
+ *          Matrix Size, Sequential Time, Parallel Time, Speedup
  *
  * NOTE:
- * Cramer's Rule is computationally expensive (O(n^4)).
- * This program is for performance analysis and OS parallelism study.
- **********************************************************************/
+ * Cramer's Rule has very high computational complexity (≈ O(n⁴)).
+ * This program is meant for OS process parallelism performance study,
+ * not for practical large-scale linear equation solving.
+ *****************************************************************************************/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,14 +31,12 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-/**********************************************************************
- * MATRIX MEMORY MANAGEMENT SECTION
- *
- * These functions handle dynamic creation, copying, and deletion of
- * square matrices required during determinant and Cramer's rule steps.
- **********************************************************************/
+/*****************************************************************************************
+ * MATRIX MEMORY MANAGEMENT
+ * These helper functions dynamically allocate, copy, and free matrices.
+ *****************************************************************************************/
 
-/* Allocate an n × n matrix dynamically */
+/* Dynamically allocate an n × n matrix */
 double **makeGrid(int dim)
 {
     double **grid = malloc(dim * sizeof(double *));
@@ -44,7 +45,7 @@ double **makeGrid(int dim)
     return grid;
 }
 
-/* Free memory allocated to matrix */
+/* Free memory allocated to a matrix */
 void destroyGrid(double **grid, int dim)
 {
     for (int i = 0; i < dim; i++)
@@ -52,7 +53,7 @@ void destroyGrid(double **grid, int dim)
     free(grid);
 }
 
-/* Copy matrix contents */
+/* Copy matrix src → dest */
 void cloneGrid(double **src, double **dest, int dim)
 {
     for (int i = 0; i < dim; i++)
@@ -60,28 +61,28 @@ void cloneGrid(double **src, double **dest, int dim)
             dest[i][j] = src[i][j];
 }
 
-/* Replace one column of matrix with vector B (Cramer's rule step) */
+/* Replace a column of matrix with vector B (Used in Cramer's Rule) */
 void swapColumn(double **grid, double *vec, int colIndex, int dim)
 {
     for (int i = 0; i < dim; i++)
         grid[i][colIndex] = vec[i];
 }
 
-/**********************************************************************
- * DETERMINANT CALCULATION SECTION
+/*****************************************************************************************
+ * DETERMINANT CALCULATION
  *
- * Uses Gaussian elimination to convert matrix into upper triangular
- * form. Determinant = product of diagonal elements.
- * Time Complexity = O(n³)
- **********************************************************************/
-
+ * Uses Gaussian Elimination to convert the matrix into upper triangular form.
+ * Determinant = product of diagonal elements.
+ *
+ * Time Complexity: O(n³)
+ *****************************************************************************************/
 double calcDet(double **grid, int dim)
 {
     double result = 1.0;
 
     for (int i = 0; i < dim; i++)
     {
-        /* If pivot is zero → determinant becomes zero */
+        /* If pivot element is near zero, determinant becomes zero */
         if (fabs(grid[i][i]) < 1e-9)
             return 0;
 
@@ -93,23 +94,21 @@ double calcDet(double **grid, int dim)
                 grid[j][k] -= factor * grid[i][k];
         }
 
-        /* Multiply diagonal elements */
         result *= grid[i][i];
     }
     return result;
 }
 
-/**********************************************************************
+/*****************************************************************************************
  * SEQUENTIAL CRAMER SOLVER
  *
  * Steps:
- * 1. Compute determinant of A
+ * 1. Compute determinant of original matrix A
  * 2. For each variable Xi:
- *      Replace column i with vector B
- *      Compute determinant of modified matrix
- *      Xi = det(Ai) / det(A)
- **********************************************************************/
-
+ *      - Replace column i of A with vector B
+ *      - Compute determinant of modified matrix
+ *      - Xi = det(Ai) / det(A)
+ *****************************************************************************************/
 void linearSolveSeq(double **A, double *B, double *X, int n)
 {
     double **tmp = makeGrid(n);
@@ -118,7 +117,7 @@ void linearSolveSeq(double **A, double *B, double *X, int n)
     double detA = calcDet(tmp, n);
     destroyGrid(tmp, n);
 
-    if (detA == 0) return;
+    if (detA == 0) return;  // No unique solution
 
     for (int i = 0; i < n; i++)
     {
@@ -132,16 +131,16 @@ void linearSolveSeq(double **A, double *B, double *X, int n)
     }
 }
 
-/**********************************************************************
- * PARALLEL CRAMER SOLVER
+/*****************************************************************************************
+ * PARALLEL CRAMER SOLVER (PROCESS-BASED PARALLELISM)
  *
- * Uses fork() to create child processes.
+ * fork() creates child processes.
  * Each child computes one variable Xi independently.
  *
- * NOTE: fork() creates separate memory spaces. This demonstrates
- * process parallelism, not shared-memory parallelism.
- **********************************************************************/
-
+ * Important Concept:
+ * fork() creates separate memory spaces, so this demonstrates
+ * process-level parallelism rather than shared-memory parallelism.
+ *****************************************************************************************/
 void linearSolvePar(double **A, double *B, double *X, int n)
 {
     double **tmp = makeGrid(n);
@@ -162,23 +161,22 @@ void linearSolvePar(double **A, double *B, double *X, int n)
             X[i] = calcDet(local, n) / detA;
 
             destroyGrid(local, n);
-            exit(0);
+            exit(0);  // Child exits after its computation
         }
     }
 
-    /* Parent waits for all child processes */
+    /* Parent waits for all children to finish */
     for (int i = 0; i < n; i++)
         wait(NULL);
 }
 
-/**********************************************************************
- * MAIN PERFORMANCE DRIVER
+/*****************************************************************************************
+ * MAIN FUNCTION — PERFORMANCE DRIVER
  *
- * Accepts matrix sizes from command line.
- * Runs sequential and parallel solvers.
- * Measures time and writes results to CSV.
- **********************************************************************/
-
+ * Accepts multiple matrix sizes from command line,
+ * runs both sequential and parallel solvers,
+ * measures execution time, and writes results to CSV.
+ *****************************************************************************************/
 int main(int argc, char *argv[])
 {
     if (argc < 2)
@@ -187,16 +185,25 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    /* Open CSV file in current working directory */
     FILE *fp = fopen("results.csv", "w");
-    fprintf(fp, "size,seq_time,par_time,speedup\n");
+    if (!fp)
+    {
+        perror("Error opening results.csv");
+        return 1;
+    }
 
-    srand(time(NULL));
+    fprintf(fp, "size,seq_time,par_time,speedup\n");
+    fflush(fp);  // Flush header before any fork occurs
+
+    srand(time(NULL));  // Seed random generator
 
     for (int arg = 1; arg < argc; arg++)
     {
         int n = atoi(argv[arg]);
         printf("\nRunning for matrix size %d\n", n);
 
+        /* Allocate matrix and vectors */
         double **A = makeGrid(n);
         double *B = malloc(n * sizeof(double));
         double *X = malloc(n * sizeof(double));
@@ -215,6 +222,8 @@ int main(int argc, char *argv[])
         clock_t t2 = clock();
         double seqTime = (double)(t2 - t1) / CLOCKS_PER_SEC;
 
+        fflush(fp);  // Flush before fork to avoid duplicate buffer writes
+
         /* Parallel timing */
         t1 = clock();
         linearSolvePar(A, B, X, n);
@@ -228,6 +237,7 @@ int main(int argc, char *argv[])
 
         fprintf(fp, "%d,%.5f,%.5f,%.2f\n",
                 n, seqTime, parTime, speedup);
+        fflush(fp);  // Ensure data is written safely
 
         destroyGrid(A, n);
         free(B);
